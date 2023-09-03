@@ -1,0 +1,5 @@
+{
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "cmake.configureOnOpen": true,
+  "st.plugins": "C:/ST/STM32CubeIDE_1.13.1/STM32CubeIDE/plugins",
+}
