@@ -49,7 +49,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint32_t CO2Data, TVOCData;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,12 +71,25 @@ void setAir(bool value)
     HAL_GPIO_WritePin(OUT7_GPIO_Port, OUT7_Pin, value);
 }
 
-void getCO2()
+uint32_t getCO2()
 {
     SGP30_Write(0x20, 0x08);
     uint32_t sgp30_dat = SGP30_Read(); // ¶ÁÈ¡SGP30µÄÖµ
-    CO2Data = (sgp30_dat & 0xffff0000) >> 16; // È¡³öCO2Å¨¶ÈÖµ
-    TVOCData = sgp30_dat & 0x0000ffff; // È¡³öTVOCÖµ
+    uint32_t CO2Data = (sgp30_dat & 0xffff0000) >> 16; // È¡³öCO2Å¨¶ÈÖµ
+    uint32_t TVOCData = sgp30_dat & 0x0000ffff; // È¡³öTVOCÖµ
+    return CO2Data;
+}
+
+void sgp30Check()
+{
+    uint32_t sgp30_dat, CO2Data, TVOCData;
+    do {
+        delay_ms(500);
+        SGP30_Write(0x20, 0x08);
+        sgp30_dat = SGP30_Read(); // ¶ÁÈ¡SGP30µÄÖµ
+        CO2Data = (sgp30_dat & 0xffff0000) >> 16; // È¡³öCO2Å¨¶ÈÖµ
+        TVOCData = sgp30_dat & 0x0000ffff; // È¡³öTVOCÖµ
+    } while (CO2Data == 400 && TVOCData == 0);
 }
 
 void oledSetBkg()
@@ -124,6 +137,30 @@ void bspCheck()
     }
 }
 
+static uint32_t getSoftCO2Value()
+{
+    const uint8_t times = 5;
+    uint32_t buf[times];
+
+    for (size_t i = 0; i < 5; i++) {
+        buf[i] = getCO2();
+    }
+    for (size_t i = 0; i < times - 1; i++) {
+        for (size_t j = i + 1; j < times; j++) {
+            if (buf[i] > buf[j]) {
+                uint32_t temp = buf[i];
+                buf[i] = buf[j];
+                buf[j] = temp;
+            }
+        }
+    }
+    uint32_t sum = 0;
+    for (size_t i = 1; i < times - 1; i++) {
+        sum += buf[i];
+    }
+    return sum / (times - 2);
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -133,6 +170,11 @@ void bspCheck()
 int main(void)
 {
     /* USER CODE BEGIN 1 */
+    const bool kDebugMode = false;
+    const uint32_t o2ValueRef = 1148;
+    const float coVolRef = 0.004;
+
+    const float R0 = (3.3f - coVolRef) / coVolRef * 10.0f / pow(1.0f / 98.322f, 1.0f / -1.458f);
 
     /* USER CODE END 1 */
 
@@ -157,7 +199,7 @@ int main(void)
     MX_DMA_Init();
     MX_ADC1_Init();
     /* USER CODE BEGIN 2 */
-    uint32_t ADC_Value[100], coValue, o2Value;
+    uint32_t ADC_Value[100], coValue, o2Value, CO2Data;
     uint8_t cnt = 0;
     bool isAO_03Fail = false;
 
@@ -173,12 +215,7 @@ int main(void)
     // bspCheck();
 
     SGP30_Init();
-    delay_ms(100);
-    getCO2();
-    while (CO2Data == 400 && TVOCData == 0) {
-        getCO2();
-        delay_ms(500);
-    }
+    sgp30Check();
 
     /* USER CODE END 2 */
 
@@ -191,12 +228,11 @@ int main(void)
         }
         cnt--;
 
-        getCO2();
+        CO2Data = getSoftCO2Value();
         oled_show_num(64, 16, CO2Data, 5, 16);
         if (CO2Data <= 400) {
             oled_show_char(64 + 8, 16, '<', 16, 1);
         }
-        // oled_show_num(0, 16, TVOCData, 5, 16);
 
         coValue = 0;
         o2Value = 0;
@@ -209,9 +245,8 @@ int main(void)
 
         // CO Calc
         float coVol = (float)(coValue)*3.3 / 4096;
-        // float RS = (3.3f - coVol) / coVol * 10;
-        // float coPpm = 98.322f * pow(RS / 16, -1.458f);
-        float coPpm = coVol * 100;
+        float RS = (3.3f - coVol) / coVol * 10;
+        float coPpm = 98.322f * pow(RS / R0, -1.458f);
         if (coPpm < 1) {
             oled_show_string(64 + 8 * 3, 32, "<1", 16);
         } else {
@@ -219,7 +254,7 @@ int main(void)
         }
 
         // O2 Calc
-        float o2Vol = (float)(o2Value) / 1100 * 20.9;
+        float o2Vol = (float)(o2Value) / o2ValueRef * 20.9;
         oled_show_num(64, 48, o2Vol, 2, 16);
         oled_show_char(104 - 24, 48, '.', 16, 1);
         oled_show_num(104 - 16, 48, (uint32_t)(o2Vol * 10) % 10, 1, 16);
@@ -238,11 +273,11 @@ int main(void)
             HAL_GPIO_WritePin(OUT2_GPIO_Port, OUT2_Pin, 0);
             co2UseAir = false;
         }
-        if (coPpm >= 50) {
+        if (coPpm >= 20) {
             HAL_GPIO_WritePin(OUT3_GPIO_Port, OUT3_Pin, 0);
             HAL_GPIO_WritePin(OUT4_GPIO_Port, OUT4_Pin, 1);
             coUseAir = true;
-        } else if (coPpm >= 20) {
+        } else if (coPpm >= 10) {
             HAL_GPIO_WritePin(OUT3_GPIO_Port, OUT3_Pin, 1);
             HAL_GPIO_WritePin(OUT4_GPIO_Port, OUT4_Pin, 0);
             coUseAir = false;
@@ -261,11 +296,11 @@ int main(void)
         } else {
             if (o2Vol < 2.0) {
                 isAO_03Fail = true;
-            } else if (o2Vol <= 18.5) {
+            } else if (o2Vol < 17.0) {
                 HAL_GPIO_WritePin(OUT5_GPIO_Port, OUT5_Pin, 0);
                 HAL_GPIO_WritePin(OUT6_GPIO_Port, OUT6_Pin, 1);
                 setO2(true);
-            } else if (o2Vol <= 19.5) {
+            } else if (o2Vol < 19.0) {
                 HAL_GPIO_WritePin(OUT5_GPIO_Port, OUT5_Pin, 1);
                 HAL_GPIO_WritePin(OUT6_GPIO_Port, OUT6_Pin, 0);
                 setO2(false);
@@ -274,6 +309,11 @@ int main(void)
                 HAL_GPIO_WritePin(OUT6_GPIO_Port, OUT6_Pin, 0);
                 setO2(false);
             }
+        }
+
+        if (kDebugMode) {
+            oled_show_num(0, 32, coVol * 100, 5, 16);
+            oled_show_num(0, 48, o2Value, 5, 16);
         }
 
         oled_refresh_gram();
