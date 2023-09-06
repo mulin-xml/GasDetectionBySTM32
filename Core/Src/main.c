@@ -171,8 +171,8 @@ int main(void)
 {
     /* USER CODE BEGIN 1 */
     const bool kDebugMode = false;
-    const uint32_t o2ValueRef = 1148;
-    const float coVolRef = 0.004;
+    const uint32_t o2ValueRef = 1201;
+    const float coVolRef = 1.17;
 
     const float R0 = (3.3f - coVolRef) / coVolRef * 10.0f / pow(1.0f / 98.322f, 1.0f / -1.458f);
 
